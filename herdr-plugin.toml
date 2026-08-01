@@ -1,0 +1,12 @@
+id = "nate.project-sessions"
+name = "Project Sessions"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Browse Git projects, worktrees, and OpenCode sessions from one Herdr pane."
+platforms = ["linux"]
+
+[[panes]]
+id = "browser"
+title = "Projects and Sessions"
+placement = "overlay"
+command = ["node", "src/browser.js"]

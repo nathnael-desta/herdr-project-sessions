@@ -1,0 +1,8 @@
+# Local development output
+node_modules/
+npm-debug.log*
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
