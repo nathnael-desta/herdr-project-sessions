@@ -54,10 +54,10 @@ directory.
 ## Install From GitHub
 
 After this repository has been pushed, install it with Herdr's GitHub plugin
-installer. Replace `OWNER/REPO` with the repository's GitHub path:
+installer:
 
 ```bash
-herdr plugin install OWNER/REPO -y
+herdr plugin install nathnael-desta/herdr-project-sessions -y
 herdr plugin list
 ```
 
