@@ -1,6 +1,6 @@
 id = "nate.project-sessions"
 name = "Project Sessions"
-version = "0.2.0"
+version = "0.2.1"
 min_herdr_version = "0.7.0"
 description = "Browse Git projects, worktrees, and agent sessions from one Herdr pane."
 platforms = ["linux"]

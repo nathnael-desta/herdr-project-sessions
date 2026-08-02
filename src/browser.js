@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const HERDR = process.env.HERDR_BIN_PATH || "herdr";
 const HOME = os.homedir();
@@ -14,6 +15,9 @@ const PROJECT_ROOT = path.join(OPENCODE_DATA, "storage", "project");
 const MAX_SESSIONS = 500;
 const STATE_ROOT = process.env.HERDR_PLUGIN_STATE_DIR || path.join(HOME, ".config", "herdr", "project-sessions-state");
 const ARCHIVE_FILE = path.join(STATE_ROOT, "archive.json");
+const DATA_CACHE_FILE = path.join(STATE_ROOT, "projects.json");
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const DEMO_MODE = process.argv.includes("--demo");
 
 const ansi = {
   reset: "\x1b[0m",
@@ -25,6 +29,50 @@ const ansi = {
   yellow: "\x1b[33m",
   red: "\x1b[31m",
 };
+
+function demoProjects() {
+  const now = Date.now();
+  const minutes = 60 * 1000;
+  const hours = 60 * minutes;
+  return [
+    {
+      key: "demo:atlas",
+      name: "atlas",
+      path: "~/code/atlas",
+      branch: "main",
+      dirty: true,
+      openWorkspaceId: "demo:w1",
+      sessions: [
+        { id: "demo-atlas-1", title: "Add offline route caching", updated: now - 2 * minutes, provider: "opencode", agent: "opencode", status: "working", paneId: "demo:p1" },
+        { id: "demo-atlas-2", title: "Review map matching API", updated: now - 18 * minutes, provider: "claude", agent: "claude", status: "idle", paneId: "demo:p2" },
+        { id: "demo-atlas-3", title: "Write route-sync tests", updated: now - 2 * hours, provider: "codex", agent: "codex", status: "settled" },
+      ],
+    },
+    {
+      key: "demo:herdr",
+      name: "herdr-project-sessions",
+      path: "~/code/herdr-project-sessions",
+      branch: "main",
+      dirty: false,
+      openWorkspaceId: "demo:w2",
+      sessions: [
+        { id: "demo-herdr-1", title: "Make the session browser open faster", updated: now - 7 * minutes, provider: "opencode", agent: "opencode", status: "working", paneId: "demo:p3" },
+        { id: "demo-herdr-2", title: "Document plugin installation", updated: now - 1 * hours, provider: "opencode", agent: "opencode", status: "settled" },
+      ],
+    },
+    {
+      key: "demo:signal",
+      name: "signal-garden",
+      path: "~/code/signal-garden",
+      branch: "feat/accessibility",
+      dirty: true,
+      sessions: [
+        { id: "demo-signal-1", title: "Audit keyboard navigation", updated: now - 3 * hours, provider: "codex", agent: "codex", status: "blocked", paneId: "demo:p4" },
+        { id: "demo-signal-2", title: "Polish empty states", updated: now - 1 * hours, provider: "pi", agent: "pi", status: "settled" },
+      ],
+    },
+  ];
+}
 
 function command(file, args, cwd = process.cwd()) {
   const result = spawnSync(file, args, {
@@ -61,6 +109,24 @@ function readJson(file) {
   }
 }
 
+function loadDataCache() {
+  const state = readJson(DATA_CACHE_FILE);
+  return Array.isArray(state?.projects) ? state.projects : undefined;
+}
+
+function saveDataCache(projects) {
+  try {
+    fs.mkdirSync(STATE_ROOT, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      DATA_CACHE_FILE,
+      `${JSON.stringify({ version: 1, generated_at: Date.now(), projects }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  } catch {
+    // A cache miss only makes the next launch do a full refresh.
+  }
+}
+
 function loadArchive() {
   const state = readJson(ARCHIVE_FILE);
   const archived = new Map();
@@ -81,6 +147,9 @@ function loadArchive() {
 }
 
 function saveArchive(archived) {
+  if (DEMO_MODE) {
+    return;
+  }
   try {
     fs.mkdirSync(STATE_ROOT, { recursive: true, mode: 0o700 });
     const sessionIds = [...archived.keys()].sort();
@@ -427,6 +496,49 @@ function collectData() {
     });
 }
 
+function spawnDataRefresh(onData, onError) {
+  const child = spawn(process.execPath, [SCRIPT_PATH, "--dump"], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  let output = "";
+  let finished = false;
+  const fail = (error) => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    onError(error);
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.on("error", fail);
+  child.on("close", (code) => {
+    if (finished) {
+      return;
+    }
+    if (code !== 0) {
+      fail(new Error(`data refresh exited with status ${code}`));
+      return;
+    }
+    finished = true;
+    try {
+      const projects = JSON.parse(output);
+      if (!Array.isArray(projects)) {
+        throw new Error("data refresh returned an invalid project list");
+      }
+      saveDataCache(projects);
+      onData(projects);
+    } catch (error) {
+      onError(error);
+    }
+  });
+  return child;
+}
+
 function archiveSession(archived, session, archivedAt = Date.now()) {
   if (!session || session.paneId || archived.has(session.id)) {
     return false;
@@ -560,7 +672,12 @@ function render(state) {
   ];
 
   if (rows.length === 0) {
-    output.push(`${ansi.dim}${state.archiveMode ? "No archived sessions." : "No sessions found."}${ansi.reset}`);
+    const emptyMessage = state.loading
+      ? "Loading project/session index..."
+      : state.archiveMode
+        ? "No archived sessions."
+        : "No sessions found.";
+    output.push(`${ansi.dim}${emptyMessage}${ansi.reset}`);
   }
 
   for (let index = state.offset; index < Math.min(rows.length, state.offset + contentHeight); index += 1) {
@@ -637,51 +754,85 @@ function openSelected(state, row) {
 }
 
 function runDump() {
-  process.stdout.write(`${JSON.stringify(collectData(), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(DEMO_MODE ? demoProjects() : collectData(), null, 2)}\n`);
 }
 
 function start() {
+  const cachedProjects = DEMO_MODE ? demoProjects() : loadDataCache();
   const state = {
-    projects: collectData(),
+    projects: cachedProjects || [],
     collapsed: new Set(),
-    archived: loadArchive(),
+    archived: DEMO_MODE ? new Map() : loadArchive(),
     archiveMode: false,
     selected: 0,
     offset: 0,
+    loading: !cachedProjects,
+    refreshing: false,
     notice: "",
   };
-  seedArchiveTimestamps(state.projects.flatMap((project) => project.sessions), state.archived);
-  const initialUnarchived = unarchiveUpdatedSessions(
-    state.projects.flatMap((project) => project.sessions),
-    state.archived,
-  );
+  const initialSessions = DEMO_MODE ? [] : loadSessions();
+  seedArchiveTimestamps(initialSessions, state.archived);
+  const initialUnarchived = unarchiveUpdatedSessions(initialSessions, state.archived);
   if (initialUnarchived > 0) {
     state.notice = `Unarchived ${initialUnarchived} session${initialUnarchived === 1 ? "" : "s"} after new activity.`;
   }
   let input = "";
   let activityTimer;
+  let refreshProcess;
 
   const cleanup = () => {
     if (activityTimer) {
       clearInterval(activityTimer);
+    }
+    if (refreshProcess) {
+      refreshProcess.kill();
+      refreshProcess = undefined;
     }
     process.stdin.setRawMode?.(false);
     process.stdin.pause();
     process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[?1049l");
   };
 
-  const refresh = () => {
-    state.projects = collectData();
+  const applyProjects = (projects) => {
+    state.projects = projects;
     seedArchiveTimestamps(state.projects.flatMap((project) => project.sessions), state.archived);
     const unarchived = unarchiveUpdatedSessions(
       state.projects.flatMap((project) => project.sessions),
       state.archived,
     );
+    state.loading = false;
+    state.refreshing = false;
     state.notice = unarchived > 0
       ? `Unarchived ${unarchived} session${unarchived === 1 ? "" : "s"} after new activity.`
       : "";
     state.offset = 0;
     render(state);
+  };
+
+  const refresh = (notice = "Refreshing...") => {
+    if (refreshProcess) {
+      state.notice = "Refresh already running.";
+      render(state);
+      return;
+    }
+    state.refreshing = true;
+    state.notice = notice;
+    render(state);
+    refreshProcess = spawnDataRefresh(
+      (projects) => {
+        refreshProcess = undefined;
+        applyProjects(projects);
+      },
+      () => {
+        refreshProcess = undefined;
+        state.loading = false;
+        state.refreshing = false;
+        state.notice = state.projects.length > 0
+          ? "Refresh failed; showing cached data."
+          : "Refresh failed; no project data is available.";
+        render(state);
+      },
+    );
   };
 
   const move = (delta) => {
@@ -700,18 +851,21 @@ function start() {
   process.stdin.resume();
   process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
   render(state);
-  activityTimer = setInterval(() => {
+  if (!DEMO_MODE) {
+    refresh(state.projects.length > 0 ? "Refreshing..." : "Loading project/session index...");
+  }
+  activityTimer = DEMO_MODE ? undefined : setInterval(() => {
     const sessions = loadSessions();
     seedArchiveTimestamps(sessions, state.archived);
     const unarchived = unarchiveUpdatedSessions(sessions, state.archived);
     if (unarchived === 0) {
       return;
     }
-    state.projects = collectData();
     state.selected = 0;
     state.offset = 0;
     state.notice = `Unarchived ${unarchived} session${unarchived === 1 ? "" : "s"} after new activity.`;
     render(state);
+    refresh("Refreshing after activity...");
   }, 5000);
 
   process.stdin.on("data", (chunk) => {

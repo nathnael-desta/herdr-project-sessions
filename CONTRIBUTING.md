@@ -28,6 +28,7 @@ Run these commands before submitting changes:
 ```bash
 node --check src/browser.js
 node src/browser.js --dump
+node src/browser.js --demo
 herdr config check
 ```
 

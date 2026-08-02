@@ -12,6 +12,11 @@ It is intended for developers who use Herdr with Git worktrees and one or more
 terminal coding agents. The plugin is local-first: project paths, agent state,
 and session history stay on the user's machine.
 
+![Herdr Project Sessions demo](assets/demo.png)
+
+The screenshot uses the built-in synthetic demo data. It contains no local
+project names, paths, session IDs, or agent history.
+
 The browser is an overlay pane because Herdr plugins cannot currently replace
 the native split sidebar. It does not modify or delete project files, Git
 worktrees, or agent history.
@@ -19,7 +24,7 @@ worktrees, or agent history.
 ## Public Status
 
 This repository is usable from a GitHub checkout, but it is still an early
-`0.2.0` plugin. The current release is Linux-only, uses Herdr's overlay-pane
+`0.2.1` plugin. The current release is Linux-only, uses Herdr's overlay-pane
 API, and has been tested with Herdr `0.7.5`. Provider resume commands must be
 installed separately on the user's `PATH`.
 
@@ -187,6 +192,7 @@ also included when Herdr reports a session ID and working directory.
 
 - The plugin opens as an overlay; it cannot replace Herdr's native sidebar.
 - Activity polling only checks OpenCode session timestamps; press `r` for a full project and worktree refresh.
+- The first launch builds the local project cache; later launches render the cache immediately and refresh it in the background.
 - OpenCode history is local to the machine and is not synchronized.
 - Unknown providers can be listed but cannot be resumed automatically.
 - The archive is a local session-ID/timestamp list, not a provider-side archive.
@@ -201,11 +207,14 @@ Run the available checks from the repository root:
 ```bash
 node --check src/browser.js
 node src/browser.js --dump
+node src/browser.js --demo
 herdr config check
 ```
 
 `--dump` prints the collected project/session JSON and does not start the
-interactive UI. The interactive program requires a TTY.
+interactive UI. `--demo` starts the interactive UI with fictional projects and
+sessions, which is useful for screenshots and documentation. The interactive
+program requires a TTY.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
@@ -243,6 +252,8 @@ does not continuously poll while idle.
 
 ```text
 herdr-project-sessions/
+├── assets/
+│   └── demo.png         # Synthetic README screenshot
 ├── herdr-plugin.toml  # Herdr plugin manifest
 ├── README.md          # User and contributor guide
 └── src/
