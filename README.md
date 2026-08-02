@@ -1,3 +1,5 @@
+<img width="2947" height="2013" alt="image" src="https://github.com/user-attachments/assets/f114a390-4414-4391-84b0-557c3385fce8" />
+
 # Herdr Project Sessions
 
 ## About
@@ -11,11 +13,6 @@ working list without deleting any underlying data.
 It is intended for developers who use Herdr with Git worktrees and one or more
 terminal coding agents. The plugin is local-first: project paths, agent state,
 and session history stay on the user's machine.
-
-![Herdr Project Sessions demo](assets/demo.png)
-
-The screenshot uses the built-in synthetic demo data. It contains no local
-project names, paths, session IDs, or agent history.
 
 The browser is an overlay pane because Herdr plugins cannot currently replace
 the native split sidebar. It does not modify or delete project files, Git
