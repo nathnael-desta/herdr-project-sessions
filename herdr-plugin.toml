@@ -1,8 +1,8 @@
 id = "nate.project-sessions"
 name = "Project Sessions"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.0"
-description = "Browse Git projects, worktrees, and OpenCode sessions from one Herdr pane."
+description = "Browse Git projects, worktrees, and agent sessions from one Herdr pane."
 platforms = ["linux"]
 
 [[panes]]

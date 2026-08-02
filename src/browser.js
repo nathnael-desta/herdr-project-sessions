@@ -63,20 +63,67 @@ function readJson(file) {
 
 function loadArchive() {
   const state = readJson(ARCHIVE_FILE);
-  return new Set(Array.isArray(state?.session_ids) ? state.session_ids : []);
+  const archived = new Map();
+  if (state?.archived_at && typeof state.archived_at === "object" && !Array.isArray(state.archived_at)) {
+    for (const [sessionId, timestamp] of Object.entries(state.archived_at)) {
+      const archivedAt = Number(timestamp);
+      if (sessionId && Number.isFinite(archivedAt)) {
+        archived.set(sessionId, Math.max(0, archivedAt));
+      }
+    }
+  }
+  for (const sessionId of Array.isArray(state?.session_ids) ? state.session_ids : []) {
+    if (sessionId && !archived.has(sessionId)) {
+      archived.set(sessionId, 0);
+    }
+  }
+  return archived;
 }
 
 function saveArchive(archived) {
   try {
     fs.mkdirSync(STATE_ROOT, { recursive: true, mode: 0o700 });
+    const sessionIds = [...archived.keys()].sort();
+    const archivedAt = Object.fromEntries(
+      [...archived.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    );
     fs.writeFileSync(
       ARCHIVE_FILE,
-      `${JSON.stringify({ version: 1, session_ids: [...archived].sort(), updated_at: Date.now() }, null, 2)}\n`,
+      `${JSON.stringify({ version: 2, session_ids: sessionIds, archived_at: archivedAt, updated_at: Date.now() }, null, 2)}\n`,
       { mode: 0o600 },
     );
   } catch {
     // Archiving is a local UI preference; leave the current view usable if it cannot persist.
   }
+}
+
+function unarchiveUpdatedSessions(sessions, archived) {
+  let count = 0;
+  for (const session of sessions) {
+    const archivedAt = archived.get(session.id);
+    if (archivedAt > 0 && Number(session.updated || 0) > archivedAt) {
+      archived.delete(session.id);
+      count += 1;
+    }
+  }
+  if (count > 0) {
+    saveArchive(archived);
+  }
+  return count;
+}
+
+function seedArchiveTimestamps(sessions, archived) {
+  let count = 0;
+  for (const session of sessions) {
+    if (archived.get(session.id) === 0 && Number(session.updated || 0) > 0) {
+      archived.set(session.id, Number(session.updated));
+      count += 1;
+    }
+  }
+  if (count > 0) {
+    saveArchive(archived);
+  }
+  return count;
 }
 
 function walkJsonFiles(root) {
@@ -362,7 +409,7 @@ function collectData() {
         id: sessionId,
         title: `${agent.agent || "agent"} session`,
         directory,
-        updated: Date.now(),
+        updated: Number(agent.updated || 0),
         agent: agent.agent || "agent",
         provider: agent.agent || "agent",
         status: agent.agent_status || "unknown",
@@ -378,6 +425,30 @@ function collectData() {
       const rightTime = right.sessions[0]?.updated || 0;
       return rightTime - leftTime || left.name.localeCompare(right.name);
     });
+}
+
+function archiveSession(archived, session, archivedAt = Date.now()) {
+  if (!session || session.paneId || archived.has(session.id)) {
+    return false;
+  }
+  archived.set(session.id, archivedAt);
+  return true;
+}
+
+function archiveAllSessions(projects, archived) {
+  const archivedAt = Date.now();
+  let count = 0;
+  for (const project of projects) {
+    for (const session of project.sessions) {
+      if (archiveSession(archived, session, archivedAt)) {
+        count += 1;
+      }
+    }
+  }
+  if (count > 0) {
+    saveArchive(archived);
+  }
+  return count;
 }
 
 function formatAge(timestamp) {
@@ -485,7 +556,7 @@ function render(state) {
   const output = [
     `${ansi.bold}${ansi.cyan}${state.archiveMode ? "Archived Sessions" : "Projects / Sessions"}${ansi.reset}`,
     `${ansi.dim}${projects.length} projects, ${projects.reduce((total, project) => total + project.sessions.length, 0)} sessions${ansi.reset}`,
-    "",
+    state.notice ? `${ansi.green}${safeText(state.notice, width)}${ansi.reset}` : "",
   ];
 
   if (rows.length === 0) {
@@ -511,7 +582,7 @@ function render(state) {
   }
 
   while (output.length < height - 1) output.push("");
-  const archiveShortcut = state.archiveMode ? "u: unarchive" : "a: archive";
+  const archiveShortcut = state.archiveMode ? "u: unarchive" : "a: archive | A: archive all";
   const archiveViewShortcut = state.archiveMode ? "h: main" : "h: archives";
   output.push(`${ansi.dim}Shortcuts: j/k: move | space: collapse | enter: open | ${archiveShortcut} | ${archiveViewShortcut} | r: refresh | q: close${ansi.reset}`);
   process.stdout.write("\x1b[2J\x1b[H" + output.join("\n"));
@@ -577,10 +648,23 @@ function start() {
     archiveMode: false,
     selected: 0,
     offset: 0,
+    notice: "",
   };
+  seedArchiveTimestamps(state.projects.flatMap((project) => project.sessions), state.archived);
+  const initialUnarchived = unarchiveUpdatedSessions(
+    state.projects.flatMap((project) => project.sessions),
+    state.archived,
+  );
+  if (initialUnarchived > 0) {
+    state.notice = `Unarchived ${initialUnarchived} session${initialUnarchived === 1 ? "" : "s"} after new activity.`;
+  }
   let input = "";
+  let activityTimer;
 
   const cleanup = () => {
+    if (activityTimer) {
+      clearInterval(activityTimer);
+    }
     process.stdin.setRawMode?.(false);
     process.stdin.pause();
     process.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[?1049l");
@@ -588,6 +672,14 @@ function start() {
 
   const refresh = () => {
     state.projects = collectData();
+    seedArchiveTimestamps(state.projects.flatMap((project) => project.sessions), state.archived);
+    const unarchived = unarchiveUpdatedSessions(
+      state.projects.flatMap((project) => project.sessions),
+      state.archived,
+    );
+    state.notice = unarchived > 0
+      ? `Unarchived ${unarchived} session${unarchived === 1 ? "" : "s"} after new activity.`
+      : "";
     state.offset = 0;
     render(state);
   };
@@ -595,6 +687,7 @@ function start() {
   const move = (delta) => {
     const rows = flatten(state.projects, state.collapsed, state.archived, state.archiveMode);
     state.selected = Math.min(Math.max(state.selected + delta, 0), Math.max(0, rows.length - 1));
+    state.notice = "";
     render(state);
   };
 
@@ -607,6 +700,19 @@ function start() {
   process.stdin.resume();
   process.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
   render(state);
+  activityTimer = setInterval(() => {
+    const sessions = loadSessions();
+    seedArchiveTimestamps(sessions, state.archived);
+    const unarchived = unarchiveUpdatedSessions(sessions, state.archived);
+    if (unarchived === 0) {
+      return;
+    }
+    state.projects = collectData();
+    state.selected = 0;
+    state.offset = 0;
+    state.notice = `Unarchived ${unarchived} session${unarchived === 1 ? "" : "s"} after new activity.`;
+    render(state);
+  }, 5000);
 
   process.stdin.on("data", (chunk) => {
     input += chunk.toString("utf8");
@@ -671,23 +777,45 @@ function start() {
           }
         } else if (byte === 97) {
           const selected = selectedRow(state);
-          if (!state.archiveMode && selected?.type === "session" && !selected.session.paneId) {
-            state.archived.add(selected.session.id);
+          if (state.archiveMode) {
+            state.notice = "Switch to the main view before archiving a session.";
+          } else if (selected?.type !== "session") {
+            state.notice = "Select a settled session to archive.";
+          } else if (archiveSession(state.archived, selected.session)) {
             saveArchive(state.archived);
-            render(state);
+            state.notice = `Archived: ${selected.session.title}`;
+          } else {
+            state.notice = "Live sessions cannot be archived while their pane is open.";
           }
+          render(state);
+        } else if (byte === 65) {
+          if (state.archiveMode) {
+            state.notice = "Switch to the main view before archiving sessions.";
+          } else {
+            const count = archiveAllSessions(state.projects, state.archived);
+            state.selected = 0;
+            state.offset = 0;
+            state.notice = count > 0
+              ? `Archived ${count} settled session${count === 1 ? "" : "s"}.`
+              : "No settled sessions to archive.";
+          }
+          render(state);
         } else if (byte === 104) {
           state.archiveMode = !state.archiveMode;
           state.selected = 0;
           state.offset = 0;
+          state.notice = "";
           render(state);
         } else if (byte === 117) {
           const selected = selectedRow(state);
           if (state.archiveMode && selected?.type === "session") {
             state.archived.delete(selected.session.id);
             saveArchive(state.archived);
-            render(state);
+            state.notice = `Unarchived: ${selected.session.title}`;
+          } else {
+            state.notice = "Select an archived session to unarchive.";
           }
+          render(state);
         } else if (byte === 114) refresh();
       }
     }

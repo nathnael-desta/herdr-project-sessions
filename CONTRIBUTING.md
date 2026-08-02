@@ -40,7 +40,8 @@ HERDR_PLUGIN_STATE_DIR=/tmp/herdr-project-sessions-state node src/browser.js --d
 
 Interactive changes should be tested in a real Herdr pane. Check keyboard
 navigation, mouse selection, live-session focusing, settled-session resuming,
-refreshing, and archive/unarchive behavior when those areas are affected.
+refreshing, archive-all, manual unarchive, and activity-based auto-unarchive
+when those areas are affected.
 
 ## Pull Requests
 

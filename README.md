@@ -19,7 +19,7 @@ worktrees, or agent history.
 ## Public Status
 
 This repository is usable from a GitHub checkout, but it is still an early
-`0.1.0` plugin. The current release is Linux-only, uses Herdr's overlay-pane
+`0.2.0` plugin. The current release is Linux-only, uses Herdr's overlay-pane
 API, and has been tested with Herdr `0.7.5`. Provider resume commands must be
 installed separately on the user's `PATH`.
 
@@ -30,6 +30,8 @@ installed separately on the user's `PATH`.
 - Focuses a live session in its existing Herdr pane.
 - Opens a settled session in its project or worktree and resumes the provider.
 - Archives settled sessions locally without deleting their provider history.
+- Archives all settled sessions at once while leaving live panes alone.
+- Automatically unarchives sessions after newer OpenCode activity is detected.
 - Reads current Herdr state and refreshes the index on demand.
 
 ## Requirements
@@ -141,12 +143,14 @@ Unknown providers remain visible but cannot be resumed automatically.
 
 ### Archives
 
-Archive a settled session by selecting it and pressing `a`. Live sessions are
-not archived by this UI.
+Archive a settled session by selecting it and pressing `a`. Press `A` in the
+main view to archive every settled session currently known to the browser.
+Live sessions with an open Herdr pane are never archived by these actions.
 
 | Key | Behavior |
 | --- | --- |
 | `a` | Archive the selected settled session |
+| `A` | Archive all settled sessions |
 | `h` | Toggle between the main tree and archived sessions |
 | `u` | Unarchive the selected archived session |
 | `Enter` in archive view | Unarchive and open the selected session |
@@ -157,9 +161,15 @@ Archive state is stored at:
 ~/.config/herdr/project-sessions-state/archive.json
 ```
 
-Set `HERDR_PLUGIN_STATE_DIR` to use a different state directory. Archiving
-only hides a session from the main browser; it does not remove OpenCode data,
-terminate an agent, or delete a worktree.
+Set `HERDR_PLUGIN_STATE_DIR` to use a different state directory. Each new
+archive records its timestamp. While the browser is open, it checks OpenCode
+session timestamps every five seconds; if a session becomes newer than its
+archive timestamp because it was opened or received a prompt, it is
+automatically unarchived. The same check runs when the browser opens and when
+you press `r`.
+
+Archiving only hides a session from the main browser; it does not remove
+OpenCode data, terminate an agent, or delete a worktree.
 
 ## Data Model
 
@@ -176,10 +186,10 @@ also included when Herdr reports a session ID and working directory.
 ## Known Limitations
 
 - The plugin opens as an overlay; it cannot replace Herdr's native sidebar.
-- There is no background polling. Press `r` after external changes.
+- Activity polling only checks OpenCode session timestamps; press `r` for a full project and worktree refresh.
 - OpenCode history is local to the machine and is not synchronized.
 - Unknown providers can be listed but cannot be resumed automatically.
-- The current archive is a local session-ID list, not a provider-side archive.
+- The archive is a local session-ID/timestamp list, not a provider-side archive.
 
 ## Development
 
